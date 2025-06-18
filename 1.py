@@ -1,14 +1,54 @@
 import os
 from datetime import datetime
-import string
 
 import streamlit as st
 import logging
 from logging.handlers import RotatingFileHandler
 
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+
+# --- GOOGLE DRIVE SETUP ---
+
+SCOPES = ['https://www.googleapis.com/auth/drive.file']
+CREDENTIALS_FILE = 'credentials.json'  # stavi u isti folder gde je app ili apsolutnu putanju
+TOKEN_FILE = 'token.json'
+
 
 LOG_DIR = "logovi"
 FILE_DIR = "fajlovi"
+
+def google_drive_auth():
+    creds = None
+    if os.path.exists(TOKEN_FILE):
+        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+    else:
+        flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
+        creds = flow.run_local_server(port=0)
+        with open(TOKEN_FILE, 'w') as token:
+            token.write(creds.to_json())
+    
+    return creds
+
+def upload_drive(file_path, creds):
+
+    service = build('drive', 'v3', credentials=creds)
+
+    file_metadata = {
+        'name': os.path.basename(file_path)
+    }
+
+    media = MediaFileUpload(file_path)
+
+    file = service.files().create(
+        body=file_metadata,
+        media_body=media,
+        fields='id'
+    ).execute()
+
+    return file.get('id')
 
 def inicijalizuj_logger():
     os.makedirs(LOG_DIR, exist_ok=True)
@@ -86,6 +126,22 @@ elif st.session_state['stage'] == 'analiza u toku':
     try:
         logger.info('Pokrenuta analiza')
         st.session_state['rezultat'] = analiza(st.session_state['txt fajl'])
+                # --- Google Drive upload ---
+        try:
+            creds = google_drive_auth()
+
+            # Fajl korisnika
+            korisnicki_fajl = st.session_state['fajl putanja']
+            korisnicki_fajl_drive_id = upload_drive(korisnicki_fajl, creds)
+            logger.info(f'Korisnicki fajl uploadovan na Google Drive sa ID: {korisnicki_fajl_drive_id}')
+
+            # Log fajl
+            log_fajl_putanja = os.path.join(LOG_DIR, 'proba.log')
+            log_fajl_drive_id = upload_drive(log_fajl_putanja, creds)
+            logger.info(f'Log fajl uploadovan na Google Drive sa ID: {log_fajl_drive_id}')
+
+        except Exception as e:
+            logger.error(f'Greska prilikom upload-a na Google Drive: {e}')
         st.session_state['stage'] = 'zavrseno'
 
         st.rerun()

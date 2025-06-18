@@ -1,0 +1,14 @@
+# Python bytecode i cache
+__pycache__/
+*.pyc
+
+# Google API credentials i tokeni
+credentials.json
+token.json
+
+# Logovi
+logovi/
+*.log
+
+# Fajlovi za lokalno čuvanje
+fajlovi/
