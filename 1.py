@@ -9,6 +9,7 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
+from google.auth.transport.requests import Request
 
 # --- GOOGLE DRIVE SETUP ---
 
@@ -22,11 +23,34 @@ FILE_DIR = "fajlovi"
 
 def google_drive_auth():
     creds = None
+    
+    # Kreiramo konfiguracioni rečnik iz Streamlit Secrets
+    # Ovo zamenjuje čitanje iz "credentials.json"
+    try:
+        creds_config = {
+            "installed": st.secrets["google_oauth"]
+        }
+    except Exception as e:
+        st.error("Greška: Nisu pronađeni 'google_oauth' kredencijali u Streamlit Secrets.")
+        st.error(f"Proverite da li ste ispravno uneli tajne u 'secrets.toml' i na Streamlit Cloud-u. Greška: {e}")
+        return None
+
+    # Proveravamo da li token.json već postoji (za lokalni rad)
     if os.path.exists(TOKEN_FILE):
         creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
-    else:
-        flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
-        creds = flow.run_local_server(port=0)
+    
+    # Ako token ne postoji ili je istekao, pokrećemo proces autorizacije
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            # Ako je token samo istekao, osvežavamo ga
+            creds.refresh(Request())
+        else:
+            # Ako token ne postoji, pokrećemo autorizaciju
+            # Zamenili smo from_client_secrets_file sa from_client_config
+            flow = InstalledAppFlow.from_client_config(creds_config, SCOPES)
+            creds = flow.run_local_server(port=0)
+        
+        # Čuvamo novi (ili osveženi) token u token.json za sledeći put
         with open(TOKEN_FILE, 'w') as token:
             token.write(creds.to_json())
     
