@@ -65,12 +65,16 @@ def inicijalizuj_logger():
 
 
         #Fajl hendler
-        log_path = os.path.join(LOG_DIR, 'proba.log')
-        file_handler = logging.FileHandler(log_path)
-        file_handler.setFormatter(log_formatter)
-        logger.addHandler(file_handler)
+        #log_path = os.path.join(LOG_DIR, 'proba.log')
+        #file_handler = logging.FileHandler(log_path)
+        #file_handler.setFormatter(log_formatter)
+        #logger.addHandler(file_handler)
 
-        return logger
+        stream_handler = logging.StreamHandler()
+        stream_handler.setFormatter(log_formatter)
+        logger.addHandler(stream_handler)
+
+    return logger
 
 def analiza(sadrzaj):
     return sadrzaj.upper()
