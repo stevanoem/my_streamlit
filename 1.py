@@ -3,76 +3,81 @@ from datetime import datetime
 
 import streamlit as st
 import logging
-from logging.handlers import RotatingFileHandler
+#from logging.handlers import RotatingFileHandler
 
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
+#from google.oauth2.credentials import Credentials
+#from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
-from google.auth.transport.requests import Request
+#from google.auth.transport.requests import Request
+from google.oauth2 import service_account
 
 # --- GOOGLE DRIVE SETUP ---
 
 SCOPES = ['https://www.googleapis.com/auth/drive.file']
-CREDENTIALS_FILE = 'credentials.json'  # stavi u isti folder gde je app ili apsolutnu putanju
-TOKEN_FILE = 'token.json'
+#CREDENTIALS_FILE = 'credentials.json'  # stavi u isti folder gde je app ili apsolutnu putanju
+#TOKEN_FILE = 'token.json'
 
 
 LOG_DIR = "logovi"
 FILE_DIR = "fajlovi"
 
 def google_drive_auth():
-    creds = None
-    
-    # Kreiramo konfiguracioni rečnik iz Streamlit Secrets
-    # Ovo zamenjuje čitanje iz "credentials.json"
+    """
+    Autentifikacija pomoću Google Service Account kredencijala iz Streamlit Secrets.
+    Ovo je ispravan i preporučen način za server-side aplikacije.
+    """
+    logger = logging.getLogger(__name__) # Dobijamo logger za svaki slučaj
+
     try:
-        creds_config = {
-            "installed": st.secrets["google_oauth"]
-        }
-    except Exception as e:
-        st.error("Greška: Nisu pronađeni 'google_oauth' kredencijali u Streamlit Secrets.")
-        st.error(f"Proverite da li ste ispravno uneli tajne u 'secrets.toml' i na Streamlit Cloud-u. Greška: {e}")
+        # Učitava SVE kredencijale iz secrets sekcije koju smo nazvali [google_service_account]
+        # st.secrets vraća rečnik (dictionary) koji savršeno odgovara onome što funkcija očekuje
+        creds_json = st.secrets["google_service_account"]
+        
+        # Kreiramo objekat sa kredencijalima iz učitanog rečnika
+        creds = service_account.Credentials.from_service_account_info(
+            creds_json, 
+            scopes=SCOPES
+        )
+        
+        logger.info("Uspešno kreirani kredencijali pomoću Service Account-a.")
+        return creds
+
+    except KeyError:
+        # ako sekcija [google_service_account] uopšte ne postoji u secrets
+        error_msg = "Greška: Sekcija [google_service_account] nije pronađena u Streamlit Secrets."
+        logger.error(error_msg)
+        st.error(error_msg)
+        st.error("Molimo vas, proverite da li ste ispravno uneli tajne na Streamlit Cloud-u i u lokalnom 'secrets.toml' fajlu.")
         return None
 
-    # Proveravamo da li token.json već postoji (za lokalni rad)
-    if os.path.exists(TOKEN_FILE):
-        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+    except Exception as e:
     
-    # Ako token ne postoji ili je istekao, pokrećemo proces autorizacije
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            # Ako je token samo istekao, osvežavamo ga
-            creds.refresh(Request())
-        else:
-            # Ako token ne postoji, pokrećemo autorizaciju
-            # Zamenili smo from_client_secrets_file sa from_client_config
-            flow = InstalledAppFlow.from_client_config(creds_config, SCOPES)
-            creds = flow.run_local_server(port=0)
+        error_msg = f"Greška prilikom učitavanja ili parsiranja Service Account kredencijala: {e}"
+        logger.error(error_msg)
+        st.error("Došlo je do neočekivane greške pri povezivanju sa Google nalogom.")
+        st.error(error_msg)
+        return None
+
+def upload_drive(file_path, creds, folder_id):
+    """Postavlja fajl sa date putanje na Google Drive."""
+    try:
+        service = build('drive', 'v3', credentials=creds)
+        file_metadata = {'name': os.path.basename(file_path) ,
+            'parents': [folder_id] }
+        media = MediaFileUpload(file_path)
+        file = service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id',
+            supportsAllDrives=True
+        ).execute()
+        return file.get('id')
+    except Exception as e:
         
-        # Čuvamo novi (ili osveženi) token u token.json za sledeći put
-        with open(TOKEN_FILE, 'w') as token:
-            token.write(creds.to_json())
-    
-    return creds
-
-def upload_drive(file_path, creds):
-
-    service = build('drive', 'v3', credentials=creds)
-
-    file_metadata = {
-        'name': os.path.basename(file_path)
-    }
-
-    media = MediaFileUpload(file_path)
-
-    file = service.files().create(
-        body=file_metadata,
-        media_body=media,
-        fields='id'
-    ).execute()
-
-    return file.get('id')
+        logging.getLogger(__name__).error(f"Greška prilikom upload-a na Google Drive: {e}")
+        st.error(f"Greška prilikom upload-a na Google Drive: {e}")
+        return None
 
 def inicijalizuj_logger():
     os.makedirs(LOG_DIR, exist_ok=True)
@@ -127,7 +132,14 @@ if st.session_state['stage'] == 'pocetak':
 
     if fajl is not None:
         os.makedirs(FILE_DIR, exist_ok=True)
-        fajl_putanja = os.path.join(FILE_DIR, fajl.name)
+        
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        
+        original_naziv, ekstenzija = os.path.splitext(fajl.name)
+        
+        novi_naziv_fajla = f"{original_naziv}_{timestamp}{ekstenzija}"
+        
+        fajl_putanja = os.path.join(FILE_DIR, novi_naziv_fajla)
 
         with open(fajl_putanja, 'wb') as f:
             f.write(fajl.getbuffer())
@@ -151,32 +163,38 @@ elif st.session_state['stage'] == 'fajl sacuvan':
 
 # analiza
 elif st.session_state['stage'] == 'analiza u toku':
-    try:
-        logger.info('Pokrenuta analiza')
+    with st.spinner("Vrši se analiza i upload..."):
+        # ... (analiza) ...
         st.session_state['rezultat'] = analiza(st.session_state['txt fajl'])
-                # --- Google Drive upload ---
-        try:
-            creds = google_drive_auth()
 
-            # Fajl korisnika
-            korisnicki_fajl = st.session_state['fajl putanja']
-            korisnicki_fajl_drive_id = upload_drive(korisnicki_fajl, creds)
-            logger.info(f'Korisnicki fajl uploadovan na Google Drive sa ID: {korisnicki_fajl_drive_id}')
+        creds = google_drive_auth()
 
-            # Log fajl
-            log_fajl_putanja = os.path.join(LOG_DIR, 'proba.log')
-            log_fajl_drive_id = upload_drive(log_fajl_putanja, creds)
-            logger.info(f'Log fajl uploadovan na Google Drive sa ID: {log_fajl_drive_id}')
+        # 1. Eksplicitna provera da li je autentifikacija uspela
+        if creds:
 
-        except Exception as e:
-            logger.error(f'Greska prilikom upload-a na Google Drive: {e}')
-        st.session_state['stage'] = 'zavrseno'
+            try:
+                DRIVE_FOLDER_ID = st.secrets["google_drive_folder"]["folder_id"]
+            except KeyError:
+                st.error("Nije pronađen ID Google Drive foldera u secrets.toml!")
+                DRIVE_FOLDER_ID = None
+            #korisnicki_fajl_putanja = st.session_state['fajl putanja']
+            #drive_id = upload_drive(korisnicki_fajl_putanja, creds)
 
-        st.rerun()
-    except Exception as e:
-        logger.error(f'Greska {e}')
+            if DRIVE_FOLDER_ID:
+                korisnicki_fajl_putanja = st.session_state['fajl putanja']
+                drive_id = upload_drive(korisnicki_fajl_putanja, creds, DRIVE_FOLDER_ID)
+            
+            # 2. Eksplicitna provera da li je upload uspeo
+            if drive_id:
+                logger.info(f"Fajl uspešno uploadovan. Drive ID: {drive_id}")
+                st.session_state['stage'] = 'zavrseno' # SAMO AKO JE SVE PROŠLO OK
+            else:
+                # Upload nije uspeo, greška je već ispisana
+                st.session_state['stage'] = 'fajl sacuvan' # Vraćamo korisnika nazad
+        else:
+            # Autentifikacija nije uspela, greška je već ispisana
+            st.session_state['stage'] = 'fajl sacuvan' # Vraćamo korisnika nazad
 
-        st.session_state['stage'] = 'fajl sacuvan'
         st.rerun()
 
 # analiza zavrsena
