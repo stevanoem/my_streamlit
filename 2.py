@@ -1,7 +1,5 @@
-
-
 def f(a: int) -> int:
-    return a*2
+    return a*3
 
 
 if __name__ == "__main__":
