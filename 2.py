@@ -1,10 +1,10 @@
 
 
 def f(a: int) -> int:
-    return a*2
+    return a+2
 
 
 if __name__ == "__main__":
-    print("Zdravo")
+    print("Hello")
     b = f(3)
     print(b)
