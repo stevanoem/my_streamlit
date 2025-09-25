@@ -1,8 +1,9 @@
 def f(a: int) -> int:
-    return a*3
+    return a+2
+
 
 
 if __name__ == "__main__":
-    print("Zdravo")
+    print("Hello")
     b = f(3)
     print(b)
